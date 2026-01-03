@@ -1,1 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Virtual environment
+*venv/
+
+# Environment
 .env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# Cache
+.ruff_cache/
+.pytest_cache/
