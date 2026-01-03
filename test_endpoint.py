@@ -1,24 +1,33 @@
-import httpx
 import asyncio
 import json
 
+import httpx
+
+
 def parse_sse_response(text: str) -> dict:
-    """Parse SSE response and extract JSON data."""
-    lines = text.strip().split('\n')
+    """
+    Parse SSE response and extract JSON data.
+
+    Args:
+        text (str): The SSE response text.
+    Returns:
+        dict: The JSON data from the SSE response.
+    """
+    lines = text.strip().split("\n")
     for line in lines:
-        if line.startswith('data: '):
+        if line.startswith("data: "):
             data_str = line[6:]  # Remove 'data: ' prefix
             return json.loads(data_str)
     return {}
 
+
 async def test_mcp_tools():
+    """
+    Test the MCP tools/list endpoint.
+    """
     url = "https://filip-max-marc-modal-hackathon--example-mcp-server-state-4aff44.modal.run/mcp/sse"
 
-    request_data = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/list"
-    }
+    request_data = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
 
     print(f"Testing MCP tools/list...")
     print(f"Request: {json.dumps(request_data, indent=2)}\n")
@@ -47,6 +56,7 @@ async def test_mcp_tools():
 
         except Exception as e:
             print(f"Error: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_mcp_tools())

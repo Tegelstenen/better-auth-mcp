@@ -1,31 +1,44 @@
 import asyncio
-import streamlit as st
-from chatbot import Chatbot
 import os
+
+import streamlit as st
 from dotenv import load_dotenv
+
+from chatbot import Chatbot
 
 load_dotenv()
 
 
-async def main():
-    st.set_page_config(page_title="MCP Client with Gemini", page_icon="🤖")
+def get_config(key: str) -> str:
+    """
+    Get config from environment variable or Streamlit secrets.
 
-    # Get API keys
-    API_URL = "https://filip-max-marc-modal-hackathon--example-mcp-server-state-4aff44.modal.run/mcp"
-
-    # Try to get Gemini API key from environment or Streamlit secrets
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_api_key:
+    Args:
+        key (str): The key to get the config for.
+    Returns:
+        str: The config value.
+    """
+    value = os.getenv(key)
+    if not value:
         try:
-            gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+            value = st.secrets.get(key)
         except:
             pass
-
-    if not gemini_api_key:
-        st.error("GEMINI_API_KEY not found. Please set it as an environment variable or in Streamlit secrets.")
+    if not value:
+        st.error(
+            f"{key} not found. Please set it as an environment variable or in Streamlit secrets."
+        )
         st.stop()
+    return value
 
-    chatbot = Chatbot(API_URL, gemini_api_key)
+
+async def main():
+    st.set_page_config(page_title="Better Auth MCP Client", page_icon=":robot:")
+
+    api_url = get_config("MCP_SERVER_URL")
+    gemini_api_key = get_config("GEMINI_API_KEY")
+
+    chatbot = Chatbot(api_url, gemini_api_key)
     await chatbot.render()
 
 

@@ -1,31 +1,55 @@
-import streamlit as st
-import httpx
-from typing import Dict, Any, List
 import json
+from typing import Dict, List
+
+import httpx
+import streamlit as st
 from google import genai
 from google.genai import types
-import os
 
 
 class Chatbot:
-    def __init__(self, api_url: str, gemini_api_key: str):
-        self.api_url = api_url
+    """
+    Chatbot class for the Better Auth documentation MCP server.
+    """
+    model_name = "gemini-2.5-flash-lite"
+    temperature = 0.7
+    system_instruction = """You are a helpful assistant that answers questions about Better Auth using the provided tools.
+
+IMPORTANT TOOL USAGE INSTRUCTIONS:
+1. ALWAYS call 'get_table_of_contents' FIRST to see available documentation
+2. When user asks about a specific topic, use 'read_page' with the FULL path from the table of contents
+   - Example: If table of contents shows "/llms.txt/docs/plugins/email-otp.md", use that EXACT path
+3. DO NOT call 'get_table_of_contents' multiple times - reuse the information
+4. When reading pages, use the complete path including '/llms.txt/docs/' prefix
+
+Available tools:
+- get_table_of_contents: Get the full documentation structure (call once at start)
+- read_page: Read specific documentation page (use full path from table of contents)"""
+
+    def __init__(self, mcp_server_url: str, gemini_api_key: str):
+        """
+        Initialize the Chatbot class.
+
+        Args:
+            mcp_server_url (str): The URL of the MCP server.
+            gemini_api_key (str): The API key for the Gemini API.
+        """
+        self.mcp_server_url = mcp_server_url
         self.gemini_api_key = gemini_api_key
         self.client = genai.Client(api_key=gemini_api_key)
         self.mcp_tools = []
         self.gemini_tools = []
 
-    def parse_sse_response(self, text: str) -> dict:
-        """Parse SSE response and extract JSON data."""
-        lines = text.strip().split('\n')
-        for line in lines:
-            if line.startswith('data: '):
-                data_str = line[6:]  # Remove 'data: ' prefix
-                return json.loads(data_str)
-        return {}
-
     async def send_mcp_request(self, method: str, params: dict = None):
-        """Send an MCP request over SSE and get the response."""
+        """
+        Send an MCP request over SSE and get the response.
+
+        Args:
+            method (str): The MCP method to call.
+            params (dict): The parameters for the MCP method.
+        Returns:
+            dict: The JSON data from the SSE response.
+        """
         request_data = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -36,21 +60,28 @@ class Chatbot:
 
         async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
             response = await client.post(
-                f"{self.api_url}/sse",
+                f"{self.mcp_server_url}/sse",
                 json=request_data,
                 headers={"Accept": "application/json, text/event-stream"},
             )
-            return self.parse_sse_response(response.text)
-
-    async def get_tools(self):
-        response = await self.send_mcp_request("tools/list")
-        return response.get("result", {})
+            # Parse SSE response
+            lines = response.text.strip().split("\n")
+            for line in lines:
+                if line.startswith("data: "):
+                    data_str = line[6:]  # Remove 'data: ' prefix
+                    return json.loads(data_str)
+            return {}
 
     def json_schema_to_gemini_schema(self, json_schema: dict) -> dict:
-        """Convert JSON Schema to Gemini Schema format.
-
+        """
+        Convert JSON Schema to Gemini Schema format.
         Only includes fields supported by Gemini's Schema proto:
         - type, description, properties, required, items
+
+        Args:
+            json_schema (dict): The JSON schema to convert.
+        Returns:
+            dict: The Gemini schema.
         """
         schema = {}
 
@@ -66,7 +97,9 @@ class Chatbot:
         if "properties" in json_schema:
             schema["properties"] = {}
             for prop_name, prop_schema in json_schema["properties"].items():
-                schema["properties"][prop_name] = self.json_schema_to_gemini_schema(prop_schema)
+                schema["properties"][prop_name] = self.json_schema_to_gemini_schema(
+                    prop_schema
+                )
 
         # Required fields list
         if "required" in json_schema:
@@ -79,7 +112,14 @@ class Chatbot:
         return schema
 
     def mcp_to_gemini_tools(self, mcp_tools: List[Dict]) -> types.Tool:
-        """Convert MCP tools to Gemini Tool object."""
+        """
+        Convert MCP tools to Gemini Tool object.
+
+        Args:
+            mcp_tools (List[Dict]): The MCP tools to convert.
+        Returns:
+            types.Tool: The Gemini Tool object.
+        """
         function_declarations = []
         for tool in mcp_tools:
             # Convert the JSON Schema to Gemini Schema
@@ -88,30 +128,40 @@ class Chatbot:
             func_decl = types.FunctionDeclaration(
                 name=tool["name"],
                 description=tool["description"],
-                parameters=parameters
+                parameters=parameters,
             )
             function_declarations.append(func_decl)
 
         return types.Tool(function_declarations=function_declarations)
 
     async def call_mcp_tool(self, tool_name: str, tool_args: dict) -> str:
-        """Call an MCP tool and return the result."""
+        """
+        Call an MCP tool and return the result.
+
+        Args:
+            tool_name (str): The name of the tool to call.
+            tool_args (dict): The arguments for the tool.
+        Returns:
+            str: The result of the tool call.
+        """
         response = await self.send_mcp_request(
-            "tools/call",
-            {"name": tool_name, "arguments": tool_args}
+            "tools/call", {"name": tool_name, "arguments": tool_args}
         )
         if "result" in response:
-            # Handle wrapped result format
             result = response["result"]
-            if isinstance(result, dict) and "result" in result:
-                return str(result["result"])
-            return str(result)
+            try:
+                return result["content"][0]["text"]
+            except (KeyError, IndexError, TypeError):
+                return str(result.get("result", result))
         elif "error" in response:
             return f"Error: {response['error']}"
         return str(response)
 
     async def render(self):
-        st.title("MCP Client with Gemini")
+        """
+        Render the chatbot interface.
+        """
+        st.title("Better Auth MCP Client")
 
         # Initialize session state for chat history
         if "chat_history" not in st.session_state:
@@ -120,16 +170,16 @@ class Chatbot:
         # Load MCP tools
         with st.sidebar:
             st.subheader("Settings")
-            st.write("API URL:", self.api_url)
+            st.markdown(f'- MCP Server: [{self.mcp_server_url[:45]}...]({self.mcp_server_url})  \n - Model: {self.model_name}  \n - Temperature: {self.temperature}')
 
             with st.spinner("Loading MCP tools..."):
-                result = await self.get_tools()
-
+                response = await self.send_mcp_request("tools/list")
+                result = response.get("result", {})
+            
             st.subheader("Available Tools")
             if "tools" in result:
                 self.mcp_tools = result["tools"]
-                for tool in self.mcp_tools:
-                    st.write(f"• {tool['name']}")
+                st.markdown(f"- {'  \n - '.join([tool['name'] for tool in self.mcp_tools])}")
             else:
                 st.error(f"No tools found. Keys: {list(result.keys())}")
 
@@ -145,7 +195,7 @@ class Chatbot:
                 st.chat_message("assistant").write(msg["content"])
             elif msg["role"] == "tool":
                 with st.chat_message("assistant"):
-                    with st.expander(f"🔧 Called tool: {msg['tool_name']}"):
+                    with st.expander(f"Called tool: {msg['tool_name']}"):
                         st.json({"args": msg.get("args", {}), "result": msg["content"]})
 
         # Handle new query
@@ -160,49 +210,48 @@ class Chatbot:
                 contents = []
                 for msg in st.session_state.chat_history:
                     if msg["role"] == "user":
-                        contents.append(types.Content(role="user", parts=[types.Part(text=msg["content"])]))
+                        contents.append(
+                            types.Content(
+                                role="user", parts=[types.Part(text=msg["content"])]
+                            )
+                        )
                     elif msg["role"] == "assistant":
-                        contents.append(types.Content(role="model", parts=[types.Part(text=msg["content"])]))
-
-                # Add system instruction
-                system_instruction = """You are a helpful assistant that answers questions about Better Auth using the provided tools.
-
-IMPORTANT TOOL USAGE INSTRUCTIONS:
-1. ALWAYS call 'get_table_of_contents' FIRST to see available documentation
-2. When user asks about a specific topic, use 'read_page' with the FULL path from the table of contents
-   - Example: If table of contents shows "/llms.txt/docs/plugins/email-otp.md", use that EXACT path
-3. DO NOT call 'get_table_of_contents' multiple times - reuse the information
-4. When reading pages, use the complete path including '/llms.txt/docs/' prefix
-
-Available tools:
-- get_table_of_contents: Get the full documentation structure (call once at start)
-- read_page: Read specific documentation page (use full path from table of contents)"""
+                        contents.append(
+                            types.Content(
+                                role="model", parts=[types.Part(text=msg["content"])]
+                            )
+                        )
 
                 # Send message with tools
                 with st.spinner("Thinking..."):
                     response = self.client.models.generate_content(
-                        model="gemini-2.5-flash-lite",
+                        model=self.model_name,
                         contents=contents,
                         config=types.GenerateContentConfig(
                             tools=[self.gemini_tools] if self.gemini_tools else None,
-                            system_instruction=system_instruction,
-                            temperature=0.7
-                        )
+                            system_instruction=self.system_instruction,
+                            temperature=self.temperature,
+                        ),
                     )
 
                 # Handle tool calls
                 max_iterations = 5
                 iteration = 0
-                while response.candidates[0].content.parts[0].function_call and iteration < max_iterations:
+                while (
+                    response.candidates[0].content.parts[0].function_call
+                    and iteration < max_iterations
+                ):
                     iteration += 1
 
-                    function_call = response.candidates[0].content.parts[0].function_call
+                    function_call = (
+                        response.candidates[0].content.parts[0].function_call
+                    )
                     tool_name = function_call.name
                     tool_args = dict(function_call.args)
 
                     # Show tool call
                     with st.chat_message("assistant"):
-                        with st.expander(f"🔧 Calling tool: {tool_name}"):
+                        with st.expander(f"Calling tool: {tool_name}"):
                             st.json({"args": tool_args})
 
                     # Call MCP tool
@@ -210,47 +259,58 @@ Available tools:
                         tool_result = await self.call_mcp_tool(tool_name, tool_args)
 
                     # Add tool call to history
-                    st.session_state.chat_history.append({
-                        "role": "tool",
-                        "tool_name": tool_name,
-                        "args": tool_args,
-                        "content": tool_result
-                    })
+                    st.session_state.chat_history.append(
+                        {
+                            "role": "tool",
+                            "tool_name": tool_name,
+                            "args": tool_args,
+                            "content": tool_result,
+                        }
+                    )
 
                     # Add function call to contents
-                    contents.append(types.Content(
-                        role="model",
-                        parts=[types.Part(function_call=function_call)]
-                    ))
+                    contents.append(
+                        types.Content(
+                            role="model",
+                            parts=[types.Part(function_call=function_call)],
+                        )
+                    )
 
                     # Add function response to contents
-                    contents.append(types.Content(
-                        role="user",
-                        parts=[types.Part(
-                            function_response=types.FunctionResponse(
-                                name=tool_name,
-                                response={"result": tool_result}
-                            )
-                        )]
-                    ))
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part(
+                                    function_response=types.FunctionResponse(
+                                        name=tool_name, response={"result": tool_result}
+                                    )
+                                )
+                            ],
+                        )
+                    )
 
                     # Continue conversation
                     response = self.client.models.generate_content(
-                        model="gemini-2.5-flash-lite",
+                        model=self.model_name,
                         contents=contents,
                         config=types.GenerateContentConfig(
                             tools=[self.gemini_tools] if self.gemini_tools else None,
-                            system_instruction=system_instruction,
-                            temperature=0.7
-                        )
+                            system_instruction=self.system_instruction,
+                            temperature=self.temperature,
+                        ),
                     )
 
                 # Get final text response
                 final_response = response.text
-                st.session_state.chat_history.append({"role": "assistant", "content": final_response})
+                st.session_state.chat_history.append(
+                    {"role": "assistant", "content": final_response}
+                )
                 st.chat_message("assistant").write(final_response)
 
             except Exception as e:
                 st.error(f"Error: {str(e)}")
                 import traceback
+
                 st.code(traceback.format_exc())
+
