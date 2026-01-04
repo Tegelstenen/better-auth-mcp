@@ -19,3 +19,6 @@ __pycache__/
 # Cache
 .ruff_cache/
 .pytest_cache/
+
+# ChromaDB
+chroma_db/
